@@ -1,21 +1,12 @@
 package com.example.onculture.domain.socialPost.service;
 
 
-import java.io.UnsupportedEncodingException;
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
-
-import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.s3.AmazonS3;
-import com.example.onculture.domain.event.dto.EventResponseDTO;
 import com.example.onculture.domain.socialPost.domain.SocialPost;
 import com.example.onculture.domain.socialPost.dto.*;
 import com.example.onculture.domain.socialPost.repository.SocialPostLikeRepository;
@@ -25,7 +16,6 @@ import com.example.onculture.domain.user.repository.UserRepository;
 import com.example.onculture.global.exception.CustomException;
 import com.example.onculture.global.exception.ErrorCode;
 import com.example.onculture.global.utils.S3.S3Service;
-import com.example.onculture.global.utils.image.ImageUrlUtil;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -36,9 +26,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 @Service
@@ -140,27 +128,50 @@ public class SocialPostService {
 
 
     // 수정
-    public PostWithLikeResponseDTO updateSocialPost(Long userId, UpdatePostRequestDTO requestDTO, Long socialPostId, List<MultipartFile> images) {
+    public PostWithLikeResponseDTO updateSocialPost(Long userId, UpdatePostRequestDTO requestDTO, Long socialPostId, List<MultipartFile> images, List<String> existingImages) {
         User user = findUserOrThrow(userId);
         validateOwner(socialPostId, user);
 
         SocialPost socialPost = socialPostRepository.findById(socialPostId)
             .orElseThrow(() -> new CustomException(ErrorCode.POST_NOT_FOUND));
 
-        // 기존 이미지 삭제
-        deleteExistingImages(socialPost.getImageUrls());
+        // 기존 이미지 URL 리스트
+        List<String> currentImageUrls = socialPost.getImageUrls();
 
-        // 새 이미지 업로드
+        // 삭제되지 않은 이미지 URL만 필터링 (retainAll 사용 : 공통된 요소만 남기고 나머지 요소는 제거)
+        List<String> imagesToKeep = new ArrayList<>(existingImages);
+        imagesToKeep.retainAll(currentImageUrls);  // 삭제되지 않은 이미지만 남기고 나머지는 제거
+
+        // 삭제된 이미지 처리: S3에서 삭제
+        List<String> imagesToDelete = new ArrayList<>(currentImageUrls);
+        imagesToDelete.removeAll(imagesToKeep);  // 삭제된 이미지를 목록에서 찾기
+
+        // 삭제된 이미지를 S3에서 삭제
+        if (!imagesToDelete.isEmpty()) {
+            deleteExistingImages(imagesToDelete);  // 삭제된 이미지를 S3에서 삭제
+        }
+
+        // 기존 이미지에 삭제되지 않은 이미지만 남긴 후, 새 이미지 업로드
+        List<String> finalImageUrls = new ArrayList<>(imagesToKeep);
+
+        // 새 이미지 업로드 처리
         List<String> uploadedImageUrls = images != null && !images.isEmpty()
             ? s3Service.uploadFiles(images, "social_posts")
             : Collections.emptyList();
 
-        socialPost.updateSocialPost(requestDTO, uploadedImageUrls);
+        // 기존 이미지와 새로 업로드된 이미지를 합침
+        finalImageUrls.addAll(uploadedImageUrls);
+
+        // 게시글 업데이트
+        socialPost.updateSocialPost(requestDTO, finalImageUrls);
         socialPostRepository.save(socialPost);
 
+        // 좋아요 상태 확인
         boolean likeStatus = socialPostLikeRepository.existsByUserIdAndSocialPostId(userId, socialPost.getId());
+
         return new PostWithLikeResponseDTO(socialPost, likeStatus);
     }
+
 
 
     // 수정
