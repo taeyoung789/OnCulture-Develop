@@ -82,6 +82,7 @@ public class SocialPostController {
     public ResponseEntity<SuccessResponse<PostWithLikeResponseDTO>> updateSocialPost(
         @RequestPart("requestDTO") String requestDTOStr,
         @RequestPart(value = "images", required = false) List<MultipartFile> images,
+        @RequestPart(value = "existingImages", required = false) List<String> existingImages,  // 삭제되지 않은 이미지 URLs
         @PathVariable Long socialPostId,
         @AuthenticationPrincipal CustomUserDetails userDetails) {
 
@@ -94,10 +95,11 @@ public class SocialPostController {
         }
 
         PostWithLikeResponseDTO responseDTO = socialPostService.updateSocialPost(
-            userDetails.getUserId(), requestDTO, socialPostId, images);
+            userDetails.getUserId(), requestDTO, socialPostId, images, existingImages);
 
         return ResponseEntity.status(HttpStatus.OK).body(SuccessResponse.success(HttpStatus.OK, responseDTO));
     }
+
 
     @Operation(summary = "소셜 게시판 삭제", description = "socialPostId에 해당하는 게시글의 삭제 API 입니다")
     @DeleteMapping("/{socialPostId}")
